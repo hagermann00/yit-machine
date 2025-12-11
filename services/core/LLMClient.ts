@@ -1,4 +1,4 @@
-import { GoogleGenAI, GenerativeModel } from "@google/genai";
+import { GoogleGenAI } from "@google/genai";
 
 export class LLMClient {
   private static instance: LLMClient;

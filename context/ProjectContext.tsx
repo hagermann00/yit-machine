@@ -105,13 +105,13 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
       // 1. Research Phase
       const researchData = await coordinator.execute(topic, (agentStates) => {
         dispatch({ type: 'UPDATE_AGENTS', payload: agentStates });
-      });
+      }) as ResearchData;
 
       // 2. Drafting Phase
       dispatch({ type: 'START_DRAFTING' });
       const draft = await author.generateDraft(topic, researchData, settings);
 
-      dispatch({ type: 'RESEARCH_SUCCESS', payload: { topic, data: researchData, settings, draft } });
+      dispatch({ type: 'RESEARCH_SUCCESS', payload: { topic, data: researchData, settings, draft: draft as Book } });
     } catch (e: any) {
       console.error(e);
       dispatch({ type: 'SET_ERROR', payload: e.message || "Investigation failed." });
@@ -128,7 +128,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
           name: `Draft ${state.project.branches.length + 1}`,
           timestamp: Date.now(),
           settings: settings,
-          book: draft
+          book: draft as Book
       };
       dispatch({ type: 'ADD_BRANCH', payload: newBranch });
     } catch (e: any) {
