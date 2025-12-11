@@ -1,4 +1,6 @@
 import React, { Component, ErrorInfo, ReactNode } from 'react';
+import React, { Component, ErrorInfo, ReactNode } from "react";
+import { AlertOctagon, RefreshCw } from "lucide-react";
 
 interface Props {
   children: ReactNode;
@@ -11,6 +13,7 @@ interface State {
 }
 
 export class ErrorBoundary extends Component<Props, State> {
+class ErrorBoundary extends Component<Props, State> {
   public state: State = {
     hasError: false,
     error: null
