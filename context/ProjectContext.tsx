@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useReducer, ReactNode } from 'react';
-import { Project, ResearchData, GenSettings, Branch } from '../types';
+import { Project, ResearchData, GenSettings, Branch, Book } from '../types';
 import { AgentState, ResearchCoordinator } from '../services/orchestrator';
-import { generateDraft } from '../services/geminiService';
+import { AuthorAgent } from '../services/agents/AuthorAgent';
 
 interface State {
   status: 'INPUT' | 'RESEARCHING' | 'DRAFTING' | 'RESULT' | 'ERROR';
@@ -14,11 +14,13 @@ interface State {
 type Action =
   | { type: 'START_RESEARCH' }
   | { type: 'UPDATE_AGENTS', payload: AgentState[] }
+  | { type: 'START_DRAFTING' }
   | { type: 'RESEARCH_SUCCESS', payload: { topic: string; data: ResearchData; settings: GenSettings; draft: any } }
   | { type: 'SET_ERROR', payload: string }
   | { type: 'RESET' }
   | { type: 'ADD_BRANCH', payload: Branch }
-  | { type: 'SET_ACTIVE_BRANCH', payload: string };
+  | { type: 'SET_ACTIVE_BRANCH', payload: string }
+  | { type: 'UPDATE_BOOK', payload: { branchId: string, book: Book } };
 
 const initialState: State = {
   status: 'INPUT',
@@ -34,6 +36,8 @@ const reducer = (state: State, action: Action): State => {
       return { ...state, status: 'RESEARCHING', error: null, agentStates: [] };
     case 'UPDATE_AGENTS':
       return { ...state, agentStates: action.payload };
+    case 'START_DRAFTING':
+      return { ...state, status: 'DRAFTING' };
     case 'RESEARCH_SUCCESS':
        const firstBranch: Branch = {
           id: Date.now().toString(),
@@ -67,6 +71,15 @@ const reducer = (state: State, action: Action): State => {
       };
     case 'SET_ACTIVE_BRANCH':
       return { ...state, activeBranchId: action.payload };
+    case 'UPDATE_BOOK':
+        if (!state.project) return state;
+        const updatedBranches = state.project.branches.map(b =>
+            b.id === action.payload.branchId ? { ...b, book: action.payload.book } : b
+        );
+        return {
+            ...state,
+            project: { ...state.project, branches: updatedBranches }
+        };
     default:
       return state;
   }
@@ -76,6 +89,7 @@ const ProjectContext = createContext<{
   state: State;
   startInvestigation: (topic: string, settings: GenSettings) => Promise<void>;
   createBranch: (settings: GenSettings) => Promise<void>;
+  updateBook: (book: Book) => void;
   resetProject: () => void;
   setActiveBranch: (id: string) => void;
 } | undefined>(undefined);
@@ -83,18 +97,19 @@ const ProjectContext = createContext<{
 export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [state, dispatch] = useReducer(reducer, initialState);
   const coordinator = new ResearchCoordinator();
+  const author = new AuthorAgent();
 
   const startInvestigation = async (topic: string, settings: GenSettings) => {
     dispatch({ type: 'START_RESEARCH' });
     try {
+      // 1. Research Phase
       const researchData = await coordinator.execute(topic, (agentStates) => {
         dispatch({ type: 'UPDATE_AGENTS', payload: agentStates });
       });
 
-      // After research, generate first draft
-      // We still use geminiService for drafting for now
-      // Ideally this would be moved to an AuthorAgent
-      const draft = await generateDraft(topic, researchData, settings);
+      // 2. Drafting Phase
+      dispatch({ type: 'START_DRAFTING' });
+      const draft = await author.generateDraft(topic, researchData, settings);
 
       dispatch({ type: 'RESEARCH_SUCCESS', payload: { topic, data: researchData, settings, draft } });
     } catch (e: any) {
@@ -105,8 +120,9 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
 
   const createBranch = async (settings: GenSettings) => {
     if (!state.project) return;
+    // Note: We might want a 'CREATING_BRANCH' status in the future for UI feedback
     try {
-      const draft = await generateDraft(state.project.topic, state.project.research, settings);
+      const draft = await author.generateDraft(state.project.topic, state.project.research, settings);
       const newBranch: Branch = {
           id: Date.now().toString(),
           name: `Draft ${state.project.branches.length + 1}`,
@@ -117,14 +133,21 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
       dispatch({ type: 'ADD_BRANCH', payload: newBranch });
     } catch (e: any) {
        console.error("Branch generation failed", e);
+       // Optional: dispatch error specifically for branch creation
     }
+  };
+
+  const updateBook = (book: Book) => {
+      if (state.activeBranchId) {
+          dispatch({ type: 'UPDATE_BOOK', payload: { branchId: state.activeBranchId, book } });
+      }
   };
 
   const resetProject = () => dispatch({ type: 'RESET' });
   const setActiveBranch = (id: string) => dispatch({ type: 'SET_ACTIVE_BRANCH', payload: id });
 
   return (
-    <ProjectContext.Provider value={{ state, startInvestigation, createBranch, resetProject, setActiveBranch }}>
+    <ProjectContext.Provider value={{ state, startInvestigation, createBranch, updateBook, resetProject, setActiveBranch }}>
       {children}
     </ProjectContext.Provider>
   );

@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Book, Chapter, VisualElement, ImageModelID } from '../types';
 import { ChevronLeft, ChevronRight, Image as ImageIcon, BarChart2, AlertCircle, Wand2, RefreshCw, Edit3, Upload, X, Zap } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
-import { generateImage, editImage } from '../services/geminiService';
+import { ImageService } from '../services/media/ImageService';
 
 interface Props {
   book: Book;
@@ -23,6 +23,8 @@ const BookReader: React.FC<Props> = ({ book, visualStyle, imageModelHierarchy, o
   // State for the studio inputs
   const [studioPrompt, setStudioPrompt] = useState('');
   const [studioMode, setStudioMode] = useState<'GENERATE' | 'EDIT' | 'UPLOAD'>('GENERATE');
+
+  const imageService = new ImageService();
 
   const isFrontCover = activePageIndex === -1;
   const isBackCover = activePageIndex === book.chapters.length;
@@ -51,7 +53,7 @@ const BookReader: React.FC<Props> = ({ book, visualStyle, imageModelHierarchy, o
         // 1. Upload Logic is handled instantly by file input, so this action is for Gen/Edit
         if (studioMode === 'GENERATE') {
              // High Res Generation
-             imageUrl = await generateImage(studioPrompt, visualStyle, true, imageModelHierarchy); // true = High Res
+             imageUrl = await imageService.generateImage(studioPrompt, visualStyle, true, imageModelHierarchy); // true = High Res
         } else if (studioMode === 'EDIT') {
              // Image Editing
              // Need current image.
@@ -68,7 +70,7 @@ const BookReader: React.FC<Props> = ({ book, visualStyle, imageModelHierarchy, o
                  return;
              }
              
-             imageUrl = await editImage(currentImage, studioPrompt, imageModelHierarchy);
+             imageUrl = await imageService.editImage(currentImage, studioPrompt, imageModelHierarchy);
         }
 
         // Update Book State
