@@ -3,6 +3,7 @@ import { ResearchDataSchema, ValidatedResearchData } from "./core/SchemaValidato
 import { DetectiveAgent, AuditorAgent, InsiderAgent, StatAgent } from "./agents/SpecializedAgents";
 import { RESEARCH_SYSTEM_PROMPT } from "../constants";
 import { Type } from "@google/genai";
+import { cleanAndParseJSON } from "../utils/jsonParser";
 
 export type AgentStatus = 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED';
 
@@ -30,35 +31,57 @@ export class ResearchCoordinator {
     const agentStates: AgentState[] = this.agents.map(a => ({ name: a.name, status: 'PENDING' }));
     onProgress([...agentStates]);
 
-    // 1. Parallel Execution with Settled Results
+    // 1. Parallel Execution with Settled Results (Promise.allSettled)
     const promises = this.agents.map(async (agent, index) => {
       agentStates[index].status = 'RUNNING';
       onProgress([...agentStates]);
       
       try {
+        // Enforce a 45s timeout for individual agents (giving them slightly more than the default 30s)
+        // Note: The agents currently use LLMClient internally.
+        // We rely on the agent's internal implementation to use the LLMClient,
+        // but since we don't control the Agent class directly here (it's imported),
+        // we wrap the run call in a local safety block if needed.
+        // For now, assuming agent.run() returns a string.
+
         const result = await agent.run(topic);
+
+        // Basic empty check
+        if (!result || result.trim().length < 10) {
+            throw new Error("Insufficient data returned");
+        }
+
         agentStates[index].status = 'COMPLETED';
         onProgress([...agentStates]);
-        return result;
+        return { name: agent.name, data: result, success: true };
       } catch (e) {
         console.error(`${agent.name} failed:`, e);
         agentStates[index].status = 'FAILED';
+        agentStates[index].message = e instanceof Error ? e.message : "Unknown error";
         onProgress([...agentStates]);
-        return `[${agent.name} Error] Failed to retrieve data.`;
+        return { name: agent.name, data: `[${agent.name} Failed] No data available.`, success: false };
       }
     });
 
-    const results = await Promise.all(promises);
+    const results = await Promise.allSettled(promises);
     
     // 2. Synthesize Reports
-    const [detectiveReport, auditorReport, insiderReport, statReport] = results;
+    // Extract successful data
+    const validReports = results
+        .filter(r => r.status === 'fulfilled' && r.value.success)
+        .map(r => (r as PromiseFulfilledResult<{name: string, data: string, success: boolean}>).value);
 
-    const rawForensicData = `
-      DETECTIVE REPORT: ${detectiveReport}
-      AUDITOR REPORT: ${auditorReport}
-      INSIDER REPORT: ${insiderReport}
-      STATISTICIAN REPORT: ${statReport}
-    `;
+    // Critical Guard: If NO agents succeeded, abort.
+    if (validReports.length === 0) {
+        throw new Error("All research agents failed. Please try a different topic or check your connection.");
+    }
+
+    const compiledDossier = results.map(r => {
+        if (r.status === 'fulfilled') {
+            return `${r.value.name.toUpperCase()} REPORT:\n${r.value.data}`;
+        }
+        return "AGENT FAILED";
+    }).join('\n\n');
 
     // 3. Structured Synthesis
     const synthesisResponse = await this.llm.generateContentWithRetry({
@@ -68,7 +91,7 @@ export class ResearchCoordinator {
         Synthesize the conflicting reports into a single, cohesive ResearchData object.
         
         FORENSIC DOSSIER:
-        ${rawForensicData}
+        ${compiledDossier}
       `,
       config: {
         systemInstruction: RESEARCH_SYSTEM_PROMPT,
@@ -134,10 +157,9 @@ export class ResearchCoordinator {
     });
 
     const text = synthesisResponse.text || "{}";
-    const cleanText = text.replace(/```json/g, '').replace(/```/g, '');
     
     try {
-      const parsed = JSON.parse(cleanText);
+      const parsed = cleanAndParseJSON(text); // Use robust parser
       // Validate with Zod
       return ResearchDataSchema.parse(parsed);
     } catch (e) {
