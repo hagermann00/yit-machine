@@ -11,12 +11,15 @@ export default defineConfig(({ mode }) => {
       },
       plugins: [react()],
       define: {
+        // Expose as strict VITE_ var for import.meta.env
+        'import.meta.env.VITE_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
+        // Fallbacks for compatibility
         'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY),
         'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY)
       },
       resolve: {
         alias: {
-          '@': path.resolve(__dirname, '.'),
+          '@': path.resolve(__dirname, './src'),
         }
       }
     };

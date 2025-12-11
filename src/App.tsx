@@ -1,20 +1,29 @@
 
 import React, { useState } from 'react';
 import InputSection from './components/InputSection';
-import Loader from './components/Loader';
 import ResearchDashboard from './components/ResearchDashboard';
 import BookReader from './components/BookReader';
-import { performResearch, generateDraft } from './services/geminiService';
-import { AppState, Book, Project, Branch, GenSettings, ExportSettings, TrimSize } from './types';
-import { BookOpen, PieChart, ArrowLeft, Download, ChevronDown, Plus, GitBranch, Settings, X } from 'lucide-react';
+import AgentStatus from './components/AgentStatus';
+import { ProjectProvider, useProject } from './context/ProjectContext';
+import { BookOpen, PieChart, ArrowLeft, Download, ChevronDown, Plus, GitBranch, Settings, X, Terminal } from 'lucide-react';
 import { downloadPdf } from './utils/pdfExport';
+import { TrimSize, ExportSettings } from './types';
 
-const App: React.FC = () => {
-  const [state, setState] = useState<AppState>('INPUT');
-  const [project, setProject] = useState<Project | null>(null);
-  const [activeBranchId, setActiveBranchId] = useState<string | null>(null);
+const MainApp: React.FC = () => {
+  const {
+      status,
+      project,
+      activeBranchId,
+      startProject,
+      addBranch,
+      resetProject,
+      setActiveBranch,
+      updateActiveBook,
+      logs,
+      error
+  } = useProject();
+
   const [activeTab, setActiveTab] = useState<'RESEARCH' | 'BOOK'>('RESEARCH');
-  const [error, setError] = useState<string | null>(null);
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [showBranchMenu, setShowBranchMenu] = useState(false);
   
@@ -25,88 +34,6 @@ const App: React.FC = () => {
       includeBleed: false,
       imageQuality: 'standard'
   });
-
-  const handleInitialGenerate = async (topic: string, settings: GenSettings) => {
-    setState('RESEARCHING');
-    setError(null);
-    try {
-      const researchData = await performResearch(topic, settings.caseStudyCount);
-      
-      setState('DRAFTING');
-      const bookDraft = await generateDraft(topic, researchData, settings);
-
-      const firstBranch: Branch = {
-          id: Date.now().toString(),
-          name: "Original Draft",
-          timestamp: Date.now(),
-          settings: settings,
-          book: bookDraft
-      };
-
-      setProject({
-          topic,
-          research: researchData,
-          branches: [firstBranch]
-      });
-      setActiveBranchId(firstBranch.id);
-      setState('RESULT');
-      setActiveTab('RESEARCH');
-
-    } catch (err) {
-      console.error(err);
-      setError("Investigation failed. Please try again.");
-      setState('INPUT');
-    }
-  };
-
-  const handleAddBranch = async (topic: string, settings: GenSettings) => {
-    if (!project) return;
-    setState('DRAFTING');
-    setError(null);
-    try {
-        const bookDraft = await generateDraft(project.topic, project.research, settings);
-        
-        const newBranch: Branch = {
-            id: Date.now().toString(),
-            name: `Draft ${project.branches.length + 1} (${settings.tone?.substring(0, 15) || 'Custom'}...)`,
-            timestamp: Date.now(),
-            settings: settings,
-            book: bookDraft
-        };
-
-        setProject(prev => prev ? {
-            ...prev,
-            branches: [...prev.branches, newBranch]
-        } : null);
-        
-        setActiveBranchId(newBranch.id);
-        setState('RESULT');
-        setActiveTab('BOOK');
-
-    } catch (err) {
-        console.error(err);
-        setError("Failed to generate new branch.");
-        setState('RESULT');
-    }
-  };
-
-  const handleReset = () => {
-    setState('INPUT');
-    setProject(null);
-    setActiveBranchId(null);
-    setActiveTab('RESEARCH');
-  };
-
-  const updateActiveBook = (updatedBook: Book) => {
-    if (project && activeBranchId) {
-        setProject({
-            ...project,
-            branches: project.branches.map(b => 
-                b.id === activeBranchId ? { ...b, book: updatedBook } : b
-            )
-        });
-    }
-  };
 
   const activeBranch = project?.branches.find(b => b.id === activeBranchId);
 
@@ -131,22 +58,26 @@ const App: React.FC = () => {
 
   // --- Render ---
 
-  if (state === 'INPUT') {
+  if (status === 'INPUT') {
     return (
       <>
         {error && <div className="fixed top-4 left-0 right-0 text-center pointer-events-none z-50"><span className="bg-red-600 text-white px-6 py-2 rounded-full shadow-xl inline-block animate-bounce">{error}</span></div>}
-        <InputSection onGenerate={handleInitialGenerate} isLoading={false} />
+        <InputSection onGenerate={startProject} isLoading={false} />
       </>
     );
   }
 
-  if (state === 'RESEARCHING' || state === 'DRAFTING') {
+  if (status === 'RESEARCHING' || status === 'DRAFTING') {
     return (
-        <div className="min-h-screen flex flex-col items-center justify-center bg-black text-white p-4">
-             <Loader />
-             <div className="mt-8 text-yellow-500 font-mono text-sm uppercase tracking-widest animate-pulse">
-                {state === 'RESEARCHING' ? "Phase 1: Deep Web Forensic Scan" : "Phase 2: Constructing Narrative Branch"}
+        <div className="min-h-screen flex flex-col items-center justify-center bg-black text-white p-4 gap-8">
+             <div className="text-center">
+                 <h2 className="text-2xl font-bold text-yellow-500 mb-2">
+                    {status === 'RESEARCHING' ? "PHASE 1: FORENSIC INVESTIGATION" : "PHASE 2: NARRATIVE CONSTRUCTION"}
+                 </h2>
+                 <p className="text-gray-500 text-sm">Do not close this window.</p>
              </div>
+
+             <AgentStatus logs={logs} status={status} />
         </div>
     );
   }
@@ -156,7 +87,7 @@ const App: React.FC = () => {
       {/* Header */}
       <header className="h-16 border-b border-gray-800 bg-black/50 backdrop-blur-md sticky top-0 z-50 flex items-center justify-between px-4 lg:px-6">
         <div className="flex items-center gap-4 lg:gap-6">
-            <button onClick={handleReset} className="text-gray-500 hover:text-white transition-colors flex items-center gap-2 text-sm">
+            <button onClick={resetProject} className="text-gray-500 hover:text-white transition-colors flex items-center gap-2 text-sm">
                 <ArrowLeft size={16} /> <span className="hidden md:inline">New Topic</span>
             </button>
             <div className="h-6 w-px bg-gray-800"></div>
@@ -179,7 +110,7 @@ const App: React.FC = () => {
                         {project?.branches.map(branch => (
                             <button
                                 key={branch.id}
-                                onClick={() => { setActiveBranchId(branch.id); setShowBranchMenu(false); setActiveTab('BOOK'); }}
+                                onClick={() => { setActiveBranch(branch.id); setShowBranchMenu(false); setActiveTab('BOOK'); }}
                                 className={`w-full text-left px-4 py-3 text-sm hover:bg-gray-800 border-l-2 transition-all ${activeBranchId === branch.id ? 'border-yellow-500 bg-gray-800/50 text-white' : 'border-transparent text-gray-400'}`}
                             >
                                 <div className="font-bold">{branch.name}</div>
@@ -245,8 +176,8 @@ const App: React.FC = () => {
                                 <GitBranch size={20} /> Generate Alternative Draft
                             </h3>
                             <InputSection 
-                                onGenerate={handleAddBranch} 
-                                isLoading={state === 'DRAFTING'} 
+                                onGenerate={addBranch}
+                                isLoading={status === 'DRAFTING'}
                                 existingResearchTopic={project.topic}
                                 defaultSettings={project.branches[0]?.settings}
                             />
@@ -311,5 +242,14 @@ const App: React.FC = () => {
     </div>
   );
 };
+
+// Top-level Provider wrapper
+const App: React.FC = () => {
+    return (
+        <ProjectProvider>
+            <MainApp />
+        </ProjectProvider>
+    )
+}
 
 export default App;
