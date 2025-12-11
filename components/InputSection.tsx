@@ -1,6 +1,6 @@
 
-import React, { useState } from 'react';
-import { Search, Zap, Settings, ChevronDown, ChevronUp, Palette, MessageSquare, LayoutTemplate, Sliders, Hash, Image as ImageIcon, Upload } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Search, Zap, Settings, ChevronDown, ChevronUp, Palette, MessageSquare, LayoutTemplate, Sliders, Hash, Image as ImageIcon, Upload, AlertCircle } from 'lucide-react';
 import { Y_IT_NANO_BOOK_SPEC } from '../constants';
 
 interface InputSectionProps {
@@ -29,6 +29,19 @@ const InputSection: React.FC<InputSectionProps> = ({ onGenerate, isLoading }) =>
   const [tone, setTone] = useState('');
   const [visualStyle, setVisualStyle] = useState('');
   
+  // Local state to prevent double-click while parent is updating
+  const [isLocalSubmitting, setIsLocalSubmitting] = useState(false);
+  
+  // Validation State
+  const [validationError, setValidationError] = useState<string | null>(null);
+
+  // Reset local submitting if loading completes (or errors out and returns to input)
+  useEffect(() => {
+    if (!isLoading) {
+      setIsLocalSubmitting(false);
+    }
+  }, [isLoading]);
+  
   // New "Throttle" Settings
   const [lengthLevel, setLengthLevel] = useState(2); // 1-3
   const [imageDensity, setImageDensity] = useState(2); // 1-3
@@ -44,9 +57,38 @@ const InputSection: React.FC<InputSectionProps> = ({ onGenerate, isLoading }) =>
   const [frontCoverImage, setFrontCoverImage] = useState<string | undefined>(undefined);
   const [backCoverImage, setBackCoverImage] = useState<string | undefined>(undefined);
 
+  const validateInputs = (): boolean => {
+    if (!topic.trim()) {
+        setValidationError("Please enter a research topic.");
+        return false;
+    }
+    if (topic.length > 100) {
+        setValidationError("Topic is too long. Keep it under 100 characters.");
+        return false;
+    }
+
+    if (targetWordCount !== '' && (targetWordCount < 100 || targetWordCount > 2000)) {
+        setValidationError("Target word count must be between 100 and 2000 per chapter.");
+        return false;
+    }
+
+    if (caseStudyCount !== '' && (caseStudyCount < 1 || caseStudyCount > 50)) {
+        setValidationError("Case study count must be between 1 and 50.");
+        return false;
+    }
+
+    setValidationError(null);
+    return true;
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (topic.trim()) {
+    
+    // Prevent double submission
+    if (isLocalSubmitting || isLoading) return;
+
+    if (validateInputs()) {
+      setIsLocalSubmitting(true);
       onGenerate(
         topic, 
         showConfig ? customSpec : undefined, 
@@ -68,6 +110,17 @@ const InputSection: React.FC<InputSectionProps> = ({ onGenerate, isLoading }) =>
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>, setter: (val: string) => void) => {
     const file = e.target.files?.[0];
     if (file) {
+      // Validate File Size (Max 5MB)
+      if (file.size > 5 * 1024 * 1024) {
+          alert("File size too large. Please upload an image under 5MB.");
+          return;
+      }
+      // Validate File Type
+      if (!file.type.startsWith('image/')) {
+          alert("Invalid file type. Please upload an image.");
+          return;
+      }
+
       const reader = new FileReader();
       reader.onloadend = () => {
         setter(reader.result as string);
@@ -77,6 +130,8 @@ const InputSection: React.FC<InputSectionProps> = ({ onGenerate, isLoading }) =>
   };
 
   const getLabelForSlider = (val: number, labels: string[]) => labels[val - 1];
+
+  const isProcessing = isLoading || isLocalSubmitting;
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-black text-white p-4 relative overflow-hidden">
@@ -106,17 +161,20 @@ const InputSection: React.FC<InputSectionProps> = ({ onGenerate, isLoading }) =>
             <input
               type="text"
               value={topic}
-              onChange={(e) => setTopic(e.target.value)}
+              onChange={(e) => {
+                  setTopic(e.target.value);
+                  if (validationError) setValidationError(null);
+              }}
               placeholder="e.g. Dropshipping, Dog Walking, AI Agency..."
-              className="w-full bg-gray-900 border border-gray-800 text-white px-6 py-4 rounded-xl focus:outline-none focus:ring-2 focus:ring-yellow-500 focus:border-transparent text-lg placeholder-gray-600 transition-all shadow-2xl"
-              disabled={isLoading}
+              className={`w-full bg-gray-900 border ${validationError ? 'border-red-500 ring-1 ring-red-500' : 'border-gray-800'} text-white px-6 py-4 rounded-xl focus:outline-none focus:ring-2 focus:ring-yellow-500 focus:border-transparent text-lg placeholder-gray-600 transition-all shadow-2xl`}
+              disabled={isProcessing}
             />
             <button
               type="submit"
-              disabled={isLoading || !topic.trim()}
+              disabled={isProcessing || !topic.trim()}
               className="absolute right-2 top-2 bottom-2 bg-yellow-500 hover:bg-yellow-400 text-black font-bold px-6 rounded-lg transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {isLoading ? (
+              {isProcessing ? (
                 <span className="animate-pulse">Deep Mining...</span>
               ) : (
                 <>
@@ -126,6 +184,13 @@ const InputSection: React.FC<InputSectionProps> = ({ onGenerate, isLoading }) =>
               )}
             </button>
           </div>
+          
+          {validationError && (
+              <div className="flex items-center justify-center gap-2 text-red-400 text-sm animate-shake">
+                  <AlertCircle size={16} />
+                  <span>{validationError}</span>
+              </div>
+          )}
 
           {/* Unified Configuration Toggle */}
           <div className="w-full max-w-2xl mx-auto">
@@ -252,9 +317,11 @@ const InputSection: React.FC<InputSectionProps> = ({ onGenerate, isLoading }) =>
                         Exact Constraints (Override)
                     </label>
                     <div>
-                        <span className="text-[10px] text-gray-500 block mb-1">Words per Chapter</span>
+                        <span className="text-[10px] text-gray-500 block mb-1">Words per Chapter (100-2000)</span>
                         <input 
                             type="number" 
+                            min="100"
+                            max="2000"
                             placeholder="e.g. 500"
                             value={targetWordCount}
                             onChange={(e) => setTargetWordCount(e.target.value === '' ? '' : parseInt(e.target.value))}
@@ -262,9 +329,11 @@ const InputSection: React.FC<InputSectionProps> = ({ onGenerate, isLoading }) =>
                         />
                     </div>
                     <div>
-                        <span className="text-[10px] text-gray-500 block mb-1">Total Case Studies</span>
+                        <span className="text-[10px] text-gray-500 block mb-1">Total Case Studies (1-50)</span>
                         <input 
                             type="number" 
+                            min="1"
+                            max="50"
                             placeholder="e.g. 15"
                             value={caseStudyCount}
                             onChange={(e) => setCaseStudyCount(e.target.value === '' ? '' : parseInt(e.target.value))}
@@ -339,6 +408,14 @@ const InputSection: React.FC<InputSectionProps> = ({ onGenerate, isLoading }) =>
         .custom-scrollbar::-webkit-scrollbar-thumb {
           background: rgba(255, 255, 255, 0.2);
           border-radius: 3px;
+        }
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            25% { transform: translateX(-5px); }
+            75% { transform: translateX(5px); }
+        }
+        .animate-shake {
+            animation: shake 0.5s ease-in-out;
         }
       `}</style>
     </div>

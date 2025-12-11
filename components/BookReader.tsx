@@ -40,6 +40,9 @@ const BookReader: React.FC<Props> = ({ book, visualStyle, onUpdateBook }) => {
   };
 
   const handleStudioAction = async (key: string, chapterIndex: number | 'front' | 'back', visualIndex?: number) => {
+      // Prevent double click/execution if already generating this key
+      if (generatingImages[key]) return;
+
       setGeneratingImages(prev => ({ ...prev, [key]: true }));
       
       try {
@@ -447,4 +450,12 @@ const BookReader: React.FC<Props> = ({ book, visualStyle, onUpdateBook }) => {
                     className="flex items-center gap-2 text-gray-500 hover:text-black disabled:opacity-30 disabled:cursor-not-allowed"
                 >
                     Next <ChevronRight size={16} />
-                </
+                </button>
+            </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default BookReader;

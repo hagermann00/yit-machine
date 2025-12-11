@@ -6,6 +6,41 @@ import { GeneratedContent } from '../types';
 // Initialize the client. The API key is guaranteed to be in process.env.API_KEY
 const getAiClient = () => new GoogleGenAI({ apiKey: process.env.API_KEY });
 
+// Retry helper function with exponential backoff
+async function callWithRetry<T>(fn: () => Promise<T>, retries = 3, delay = 2000): Promise<T> {
+  try {
+    return await fn();
+  } catch (error: any) {
+    if (retries > 0) {
+      console.warn(`API call failed, retrying... (${retries} attempts left). Error: ${error.message}`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+      return callWithRetry(fn, retries - 1, delay * 2);
+    }
+    throw error;
+  }
+}
+
+// Validator to ensure API response matches our TypeScript interfaces
+function validateResponseStructure(data: any): void {
+  if (!data || typeof data !== 'object') throw new Error("Response is not an object");
+
+  // Validate Research
+  if (!data.research) throw new Error("Missing 'research' object in response");
+  if (!Array.isArray(data.research.caseStudies)) throw new Error("Missing 'caseStudies' array");
+  if (!Array.isArray(data.research.affiliates)) throw new Error("Missing 'affiliates' array");
+  if (typeof data.research.ethicalRating !== 'number') throw new Error("Missing or invalid 'ethicalRating'");
+
+  // Validate Book
+  if (!data.book) throw new Error("Missing 'book' object in response");
+  if (!data.book.title) throw new Error("Missing book title");
+  if (!Array.isArray(data.book.chapters)) throw new Error("Missing 'chapters' array");
+  if (data.book.chapters.length === 0) throw new Error("Book has zero chapters");
+  
+  // Validate Chapter Structure
+  const firstChapter = data.book.chapters[0];
+  if (!firstChapter.title || !firstChapter.content) throw new Error("Invalid chapter structure (missing title or content)");
+}
+
 const schema: Schema = {
   type: Type.OBJECT,
   properties: {
@@ -210,32 +245,54 @@ export const generateBookContent = async (
   ${specToUse}`;
 
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: prompt,
-      config: {
-        systemInstruction: Y_IT_SYSTEM_PROMPT,
-        responseMimeType: "application/json",
-        responseSchema: schema,
-        thinkingConfig: { thinkingBudget: 4096 }, 
+    // Perform Generation inside the retry loop
+    // This ensures that if the model generates invalid JSON, we retry the whole generation step
+    const result = await callWithRetry(async () => {
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: prompt,
+        config: {
+          systemInstruction: Y_IT_SYSTEM_PROMPT,
+          responseMimeType: "application/json",
+          responseSchema: schema,
+          thinkingConfig: { thinkingBudget: 4096 }, 
+        }
+      });
+
+      let text = response.text;
+      if (!text) throw new Error("No content generated from model.");
+
+      // Sanitize Markdown code blocks if present
+      text = text.trim();
+      if (text.startsWith('```json')) {
+        text = text.replace(/^```json/, '').replace(/```$/, '');
+      } else if (text.startsWith('```')) {
+        text = text.replace(/^```/, '').replace(/```$/, '');
       }
+
+      let data;
+      try {
+        data = JSON.parse(text) as GeneratedContent;
+      } catch (e) {
+        throw new Error("Failed to parse JSON response. The model may have hallucinated malformed data.");
+      }
+      
+      // Validate structure before accepting
+      validateResponseStructure(data);
+
+      return data;
     });
 
-    const text = response.text;
-    if (!text) throw new Error("No content generated");
-
-    const data = JSON.parse(text) as GeneratedContent;
-    
-    // Inject custom cover images if provided (Overrides)
-    if (data.book.frontCover && frontCoverImage) {
-        data.book.frontCover.imageUrl = frontCoverImage;
+    // Inject custom cover images if provided (Overrides) - this happens after successful generation
+    if (result.book.frontCover && frontCoverImage) {
+        result.book.frontCover.imageUrl = frontCoverImage;
     }
-    if (data.book.backCover && backCoverImage) {
-        data.book.backCover.imageUrl = backCoverImage;
+    if (result.book.backCover && backCoverImage) {
+        result.book.backCover.imageUrl = backCoverImage;
     }
     
     // Attach settings to the response so the UI knows what was used
-    data.settings = {
+    result.settings = {
         tone: userTone,
         visualStyle: userVisuals,
         lengthLevel,
@@ -247,9 +304,9 @@ export const generateBookContent = async (
         backCoverPrompt
     };
 
-    return data;
+    return result;
   } catch (error) {
-    console.error("Gemini API Error:", error);
+    console.error("Gemini API Error after retries:", error);
     throw error;
   }
 };
@@ -273,12 +330,20 @@ export const generateImage = async (imageDescription: string, style?: string, hi
             config.imageConfig = { imageSize: "2K", aspectRatio: "1:1" }; 
         }
 
-        const response = await ai.models.generateContent({
-            model: model,
-            contents: {
-                parts: [{ text: prompt }]
-            },
-            config: config
+        const response = await callWithRetry(async () => {
+            const resp = await ai.models.generateContent({
+                model: model,
+                contents: {
+                    parts: [{ text: prompt }]
+                },
+                config: config
+            });
+            
+            // Validate image response immediately inside retry
+            if (!resp.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data) {
+                throw new Error("No image data returned from API.");
+            }
+            return resp;
         });
 
         if (response.candidates?.[0]?.content?.parts) {
@@ -301,24 +366,32 @@ export const editImage = async (base64Image: string, editInstruction: string): P
         // Cleaning the base64 string to get raw data
         const base64Data = base64Image.replace(/^data:image\/(png|jpeg|jpg);base64,/, "");
 
-        const response = await ai.models.generateContent({
-            model: 'gemini-3-pro-image-preview',
-            contents: {
-                parts: [
-                    {
-                        text: editInstruction
-                    },
-                    {
-                        inlineData: {
-                            mimeType: 'image/png',
-                            data: base64Data
+        const response = await callWithRetry(async () => {
+            const resp = await ai.models.generateContent({
+                model: 'gemini-3-pro-image-preview',
+                contents: {
+                    parts: [
+                        {
+                            text: editInstruction
+                        },
+                        {
+                            inlineData: {
+                                mimeType: 'image/png',
+                                data: base64Data
+                            }
                         }
-                    }
-                ]
-            },
-            config: {
-                imageConfig: { imageSize: "2K" } // Maintain high quality for editing
+                    ]
+                },
+                config: {
+                    imageConfig: { imageSize: "2K" } // Maintain high quality for editing
+                }
+            });
+             
+            // Validate response inside retry
+            if (!resp.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data) {
+                throw new Error("No edited image data returned from API.");
             }
+            return resp;
         });
 
         if (response.candidates?.[0]?.content?.parts) {
