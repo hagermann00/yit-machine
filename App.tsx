@@ -5,8 +5,8 @@ import Loader from './components/Loader';
 import ResearchDashboard from './components/ResearchDashboard';
 import BookReader from './components/BookReader';
 import { performResearch, generateDraft } from './services/geminiService';
-import { AppState, Book, Project, Branch, GenSettings } from './types';
-import { BookOpen, PieChart, ArrowLeft, Download, ChevronDown, Plus, GitBranch } from 'lucide-react';
+import { AppState, Book, Project, Branch, GenSettings, ExportSettings, TrimSize } from './types';
+import { BookOpen, PieChart, ArrowLeft, Download, ChevronDown, Plus, GitBranch, Settings, X } from 'lucide-react';
 import { downloadPdf } from './utils/pdfExport';
 
 const App: React.FC = () => {
@@ -17,20 +17,24 @@ const App: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [showBranchMenu, setShowBranchMenu] = useState(false);
+  
+  // Export Settings State
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exportSettings, setExportSettings] = useState<ExportSettings>({
+      trimSize: '6x9',
+      includeBleed: false,
+      imageQuality: 'standard'
+  });
 
-  // Phase 1: Initial Investigation (Research + First Branch)
   const handleInitialGenerate = async (topic: string, settings: GenSettings) => {
     setState('RESEARCHING');
     setError(null);
     try {
-      // Step 1: Research
       const researchData = await performResearch(topic, settings.caseStudyCount);
       
       setState('DRAFTING');
-      // Step 2: Generate First Draft
       const bookDraft = await generateDraft(topic, researchData, settings);
 
-      // Create Project Structure
       const firstBranch: Branch = {
           id: Date.now().toString(),
           name: "Original Draft",
@@ -46,7 +50,7 @@ const App: React.FC = () => {
       });
       setActiveBranchId(firstBranch.id);
       setState('RESULT');
-      setActiveTab('RESEARCH'); // Start on Research for the big reveal
+      setActiveTab('RESEARCH');
 
     } catch (err) {
       console.error(err);
@@ -55,7 +59,6 @@ const App: React.FC = () => {
     }
   };
 
-  // Phase 2: Adding a new Branch
   const handleAddBranch = async (topic: string, settings: GenSettings) => {
     if (!project) return;
     setState('DRAFTING');
@@ -78,12 +81,12 @@ const App: React.FC = () => {
         
         setActiveBranchId(newBranch.id);
         setState('RESULT');
-        setActiveTab('BOOK'); // Auto switch to book to see new draft
+        setActiveTab('BOOK');
 
     } catch (err) {
         console.error(err);
         setError("Failed to generate new branch.");
-        setState('RESULT'); // Return to result view on failure
+        setState('RESULT');
     }
   };
 
@@ -107,9 +110,10 @@ const App: React.FC = () => {
 
   const activeBranch = project?.branches.find(b => b.id === activeBranchId);
 
-  const handleExportPdf = () => {
+  const executeExport = () => {
     if (activeBranch) {
-        downloadPdf(activeBranch.book);
+        downloadPdf(activeBranch.book, exportSettings);
+        setShowExportModal(false);
         setShowExportMenu(false);
     }
   };
@@ -119,13 +123,13 @@ const App: React.FC = () => {
         const jsonString = `data:text/json;chatset=utf-8,${encodeURIComponent(JSON.stringify(project, null, 2))}`;
         const link = document.createElement("a");
         link.href = jsonString;
-        link.download = `y-it-project-${project.topic}.json`;
+        link.download = `y-it-project-${project.topic.replace(/\s+/g, '-').toLowerCase()}.json`;
         link.click();
         setShowExportMenu(false);
     }
   };
 
-  // --- Render States ---
+  // --- Render ---
 
   if (state === 'INPUT') {
     return (
@@ -157,7 +161,6 @@ const App: React.FC = () => {
             </button>
             <div className="h-6 w-px bg-gray-800"></div>
             
-            {/* Branch Selector */}
             <div className="relative">
                 <button 
                     onClick={() => setShowBranchMenu(!showBranchMenu)}
@@ -188,7 +191,6 @@ const App: React.FC = () => {
             </div>
         </div>
         
-        {/* Tab Switcher */}
         <div className="flex bg-gray-900 rounded-lg p-1 border border-gray-800">
             <button 
                 onClick={() => setActiveTab('RESEARCH')}
@@ -209,16 +211,18 @@ const App: React.FC = () => {
                 <Download size={20} /> <ChevronDown size={14} />
             </button>
             {showExportMenu && (
-                <div className="absolute right-0 top-full mt-2 w-48 bg-gray-900 border border-gray-800 rounded-lg shadow-xl py-1 z-50">
-                    <button onClick={handleExportPdf} className="w-full text-left px-4 py-2 text-sm hover:bg-gray-800 text-gray-300 hover:text-white">Download PDF (6x9)</button>
+                <div className="absolute right-0 top-full mt-2 w-56 bg-gray-900 border border-gray-800 rounded-lg shadow-xl py-1 z-50">
+                    <button onClick={() => { setShowExportModal(true); setShowExportMenu(false); }} className="w-full text-left px-4 py-2 text-sm hover:bg-gray-800 text-gray-300 hover:text-white flex justify-between items-center">
+                        <span>Download PDF...</span> <Settings size={12}/>
+                    </button>
                     <button onClick={handleExportJson} className="w-full text-left px-4 py-2 text-sm hover:bg-gray-800 text-gray-300 hover:text-white">Export Project JSON</button>
                 </div>
             )}
         </div>
       </header>
 
-      {/* Main View */}
-      <main className="flex-1 p-6 md:p-8 max-w-7xl mx-auto w-full">
+      {/* Main Content */}
+      <main className="flex-1 p-6 md:p-8 max-w-7xl mx-auto w-full relative">
         {project && (
             <>
                 {activeTab === 'RESEARCH' ? (
@@ -229,13 +233,13 @@ const App: React.FC = () => {
                             <BookReader 
                                 book={activeBranch.book} 
                                 visualStyle={activeBranch.settings.visualStyle} 
+                                imageModelHierarchy={activeBranch.settings.imageModelHierarchy}
                                 onUpdateBook={updateActiveBook} 
                             />
                         ) : (
                             <div className="text-center text-gray-500 py-20">No active branch selected.</div>
                         )}
 
-                        {/* Branch Creator Section */}
                         <div className="border-t border-gray-800 pt-8 mt-8">
                             <h3 className="text-xl font-bold text-gray-400 mb-6 flex items-center gap-2">
                                 <GitBranch size={20} /> Generate Alternative Draft
@@ -252,6 +256,58 @@ const App: React.FC = () => {
             </>
         )}
       </main>
+
+      {/* Export Configuration Modal */}
+      {showExportModal && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-fadeIn">
+              <div className="bg-gray-900 border border-gray-700 rounded-xl w-full max-w-md shadow-2xl overflow-hidden">
+                  <div className="p-4 border-b border-gray-800 flex justify-between items-center bg-gray-900">
+                      <h3 className="font-bold text-white flex items-center gap-2">
+                          <Settings size={18} className="text-yellow-500"/> Export Configuration
+                      </h3>
+                      <button onClick={() => setShowExportModal(false)} className="text-gray-500 hover:text-white"><X size={20}/></button>
+                  </div>
+                  
+                  <div className="p-6 space-y-6">
+                      <div className="space-y-2">
+                          <label className="text-sm font-bold text-gray-400 uppercase tracking-wider">Trim Size</label>
+                          <div className="grid grid-cols-3 gap-2">
+                              {(['5x8', '6x9', '7x10'] as TrimSize[]).map(size => (
+                                  <button
+                                      key={size}
+                                      onClick={() => setExportSettings(prev => ({...prev, trimSize: size}))}
+                                      className={`py-2 px-3 rounded text-sm font-bold border transition-all ${exportSettings.trimSize === size ? 'bg-yellow-500 text-black border-yellow-500' : 'bg-black text-gray-400 border-gray-700 hover:border-gray-500'}`}
+                                  >
+                                      {size}"
+                                  </button>
+                              ))}
+                          </div>
+                      </div>
+
+                      <div className="space-y-2">
+                          <label className="text-sm font-bold text-gray-400 uppercase tracking-wider">Print Options</label>
+                          <div className="flex items-center justify-between bg-black p-3 rounded border border-gray-800">
+                              <span className="text-sm text-gray-300">Include Bleed (+0.125")</span>
+                              <button 
+                                onClick={() => setExportSettings(prev => ({...prev, includeBleed: !prev.includeBleed}))}
+                                className={`w-12 h-6 rounded-full transition-colors relative ${exportSettings.includeBleed ? 'bg-green-500' : 'bg-gray-700'}`}
+                              >
+                                  <div className={`absolute top-1 left-1 bg-white w-4 h-4 rounded-full transition-transform ${exportSettings.includeBleed ? 'translate-x-6' : ''}`}></div>
+                              </button>
+                          </div>
+                          <p className="text-[10px] text-gray-500">Enable if you plan to professionally print this PDF (KDP/IngramSpark).</p>
+                      </div>
+                  </div>
+
+                  <div className="p-4 bg-black/50 border-t border-gray-800 flex gap-3">
+                      <button onClick={() => setShowExportModal(false)} className="flex-1 py-3 rounded font-bold text-gray-400 hover:bg-gray-800 transition-colors">Cancel</button>
+                      <button onClick={executeExport} className="flex-1 py-3 rounded font-bold bg-yellow-500 text-black hover:bg-yellow-400 transition-colors flex items-center justify-center gap-2">
+                          <Download size={18}/> Generate PDF
+                      </button>
+                  </div>
+              </div>
+          </div>
+      )}
     </div>
   );
 };

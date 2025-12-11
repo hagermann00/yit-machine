@@ -1,107 +1,102 @@
 
 import { jsPDF } from "jspdf";
-import { Book } from "../types";
+import { Book, ExportSettings, TrimSize } from "../types";
 
-export const downloadPdf = (book: Book) => {
-  // Initialize jsPDF with KDP Standard 6x9 inches format
+const PAGE_SIZES: Record<TrimSize, { width: number; height: number }> = {
+  '5x8': { width: 5, height: 8 },
+  '6x9': { width: 6, height: 9 },
+  '7x10': { width: 7, height: 10 }
+};
+
+export const downloadPdf = (book: Book, settings: ExportSettings) => {
+  const baseSize = PAGE_SIZES[settings.trimSize];
+  
+  // Calculate final dimensions with bleed if enabled
+  // Standard bleed is 0.125" on outside edges. For simplicity here, we add to W/H.
+  // Real KDP: Width + 0.125 (outer), Height + 0.25 (top/bottom)
+  const bleedW = settings.includeBleed ? 0.125 : 0;
+  const bleedH = settings.includeBleed ? 0.25 : 0;
+  
+  const finalWidth = baseSize.width + bleedW;
+  const finalHeight = baseSize.height + bleedH;
+
   const doc = new jsPDF({
     orientation: "portrait",
     unit: "in",
-    format: [6, 9] 
+    format: [finalWidth, finalHeight]
   });
 
-  const margin = 0.75;
-  const contentWidth = 6 - (margin * 2);
-  const pageHeight = 9;
-  const pageWidth = 6;
-  const contentBottom = pageHeight - margin;
+  const margin = 0.75 + (settings.includeBleed ? 0.125 : 0);
+  const contentWidth = finalWidth - (margin * 2);
+  const contentBottom = finalHeight - margin;
   let y = margin;
-  const lineHeight = 0.22; // Comfortable reading line height
+  const lineHeight = 0.22;
 
   // --- Front Cover ---
-  // If we have a front cover image, render it full page
   if (book.frontCover?.imageUrl) {
       try {
-        doc.addImage(book.frontCover.imageUrl, "PNG", 0, 0, pageWidth, pageHeight);
+        // Cover always fills the page (full bleed equivalent)
+        doc.addImage(book.frontCover.imageUrl, "PNG", 0, 0, finalWidth, finalHeight);
         
-        // If image is user uploaded (override), likely has text. If AI generated, we might want overlay text.
-        // For now, let's assume if it's AI generated (no text in image), we overlay text in PDF too.
-        // However, determining if text is in image is hard. 
-        // Strategy: Always overlay text if it's just the 'visualDescription' based generation.
-        // But since we can't easily know if the image is text-heavy or not from base64, 
-        // we'll add a simple text overlay at the top/bottom if it's an AI generation (based on context)
-        // or just let the user handle it.
-        // BETTER UX: Just render the image. The user can regenerate the image to include text if they want? 
-        // No, current AI image gen is instructed "No text".
-        // So we MUST overlay text on the PDF.
+        // Overlay Title if strictly needed (simple fallback for visibility)
+        doc.setFillColor(0, 0, 0); 
+        // Semi-transparent hack not available, just small box at top
+        doc.rect(0, finalHeight * 0.05, finalWidth, finalHeight * 0.15, "F");
         
-        doc.setFillColor(0, 0, 0); // Black box behind text for readability
-        
-        // Title
         doc.setFont("times", "bold");
-        doc.setFontSize(32);
+        doc.setFontSize(settings.trimSize === '5x8' ? 24 : 32);
         doc.setTextColor(255, 255, 255);
+        
         const titleText = book.frontCover.titleText || book.title;
-        const titleLines = doc.splitTextToSize(titleText.toUpperCase(), pageWidth - 1);
-        
-        // Semi-transparent bg for title
-        // jsPDF doesn't support alpha transparency easily without extended API, 
-        // but we can just draw a solid box or hope for the best. 
-        // Let's draw text with outline or shadow to ensure contrast? Hard in jsPDF basic.
-        // Let's draw a dark overlay at the top.
-        doc.rect(0, 1, pageWidth, titleLines.length * 0.5 + 1, "F"); 
-        
-        doc.text(titleLines, pageWidth / 2, 2, { align: "center" });
+        const titleLines = doc.splitTextToSize(titleText.toUpperCase(), finalWidth - 1);
+        doc.text(titleLines, finalWidth / 2, finalHeight * 0.1 + 0.1, { align: "center" });
 
-        // Subtitle
-        doc.setFontSize(14);
+        doc.setFontSize(settings.trimSize === '5x8' ? 12 : 14);
         doc.setFont("sans", "normal");
         const subText = book.frontCover.subtitleText || book.subtitle;
-        doc.text(subText, pageWidth / 2, 2 + (titleLines.length * 0.5), { align: "center" });
+        doc.text(subText, finalWidth / 2, finalHeight * 0.1 + (titleLines.length * 0.4), { align: "center" });
 
       } catch (e) {
         console.warn("Front cover render failed", e);
       }
       doc.addPage();
   } else {
-      // Fallback text title page
+      // Text Fallback
       doc.setFont("times", "bold");
       doc.setFontSize(24);
       doc.setTextColor(0);
       const titleLines = doc.splitTextToSize(book.title.toUpperCase(), contentWidth);
       const titleHeight = doc.getTextDimensions(titleLines).h;
-      doc.text(titleLines, 3, 3, { align: "center" });
+      doc.text(titleLines, margin, finalHeight / 3, { align: "center" });
 
       doc.setFont("times", "normal");
       doc.setFontSize(14);
       const subLines = doc.splitTextToSize(book.subtitle, contentWidth);
-      doc.text(subLines, 3, 3 + titleHeight + 0.5, { align: "center" });
+      doc.text(subLines, margin, finalHeight / 3 + titleHeight + 0.5, { align: "center" });
       
-      // Copyright / Credits at bottom of title page
       doc.setFontSize(9);
       doc.setTextColor(100);
-      doc.text("Generated by Y-It Engine v2.1", 3, 8, { align: "center" });
+      doc.text("Generated by Y-It Engine v3.0", margin, finalHeight - margin, { align: "center" });
       doc.addPage();
   }
 
-  // --- Table of Contents ---
+  // --- TOC ---
   doc.setFont("times", "bold");
   doc.setFontSize(16);
   doc.setTextColor(0);
-  doc.text("TABLE OF CONTENTS", 3, margin + 0.5, { align: "center" });
+  doc.text("TABLE OF CONTENTS", margin, margin + 0.5);
   
-  let tocY = margin + 1.5;
+  let tocY = margin + 1.2;
   doc.setFont("times", "normal");
   doc.setFontSize(11);
 
   book.chapters.forEach((chapter) => {
-    // Simple TOC entry
     doc.text(`Chapter ${chapter.number}: ${chapter.title}`, margin, tocY);
     tocY += 0.3;
   });
 
-  // --- Content Loop ---
-  let currentPdfPage = 3; // Approx
+  // --- Content ---
+  let currentPdfPage = 3; 
 
   const addNewPage = () => {
     doc.addPage();
@@ -115,31 +110,29 @@ export const downloadPdf = (book: Book) => {
     }
   };
 
-  book.chapters.forEach((chapter, index) => {
-    // Always start chapter on a new page
+  book.chapters.forEach((chapter) => {
     doc.addPage();
     currentPdfPage++;
-    y = margin + 1; // Drop down for chapter start
+    y = margin + 0.5;
 
-    // Chapter Header
+    // Chapter Title
     doc.setFont("times", "bold");
     doc.setFontSize(10);
     doc.setTextColor(100);
-    doc.text(`CHAPTER ${chapter.number}`, 3, y, { align: "center" });
+    doc.text(`CHAPTER ${chapter.number}`, margin, y);
     y += 0.25;
     
-    // Chapter Title
     doc.setFontSize(18);
     doc.setTextColor(0);
     const chTitleLines = doc.splitTextToSize(chapter.title.toUpperCase(), contentWidth);
-    doc.text(chTitleLines, 3, y, { align: "center" });
+    doc.text(chTitleLines, margin, y);
     y += (chTitleLines.length * 0.3) + 0.5;
 
-    // Hero Image (if generated)
+    // Hero Image
     const hero = chapter.visuals?.find(v => v.type === 'HERO' && v.imageUrl);
     if (hero && hero.imageUrl) {
         try {
-            const imgHeight = 3; 
+            const imgHeight = finalHeight * 0.35; 
             checkSpace(imgHeight + 0.5);
             doc.addImage(hero.imageUrl, "PNG", margin, y, contentWidth, imgHeight);
             y += imgHeight + 0.4;
@@ -148,11 +141,10 @@ export const downloadPdf = (book: Book) => {
         }
     }
 
-    // Text Content
+    // Body Text
     doc.setFont("times", "normal");
     doc.setFontSize(11);
     
-    // Naive Markdown Processing
     const paragraphs = chapter.content.split('\n');
     
     paragraphs.forEach(para => {
@@ -162,17 +154,14 @@ export const downloadPdf = (book: Book) => {
              return; 
         }
 
-        // Handle Headers
         let isBold = false;
         let fontSize = 11;
         
         if (text.startsWith('#')) {
              isBold = true;
              text = text.replace(/^#+\s*/, '');
-             fontSize = 12; // Slightly larger for subheads
+             fontSize = 12;
         } 
-        
-        // Handle bold lines or bullet points
         if (text.match(/^\*\*.*\*\*$/)) {
              isBold = true;
              text = text.replace(/\*\*/g, '');
@@ -181,21 +170,19 @@ export const downloadPdf = (book: Book) => {
         doc.setFont("times", isBold ? "bold" : "normal");
         doc.setFontSize(fontSize);
 
-        // Strip remaining markdown characters for clean print
         const cleanText = text.replace(/[*_`]/g, '');
-
         const lines = doc.splitTextToSize(cleanText, contentWidth);
         checkSpace(lines.length * lineHeight);
         
         doc.text(lines, margin, y);
-        y += (lines.length * lineHeight) + 0.1;
+        y += (lines.length * lineHeight) + 0.08;
     });
 
-    // Inline Visuals (Charts, etc)
+    // Other Visuals
     if (chapter.visuals) {
         chapter.visuals.forEach(vis => {
              if (vis.type !== 'HERO' && vis.imageUrl) {
-                 const imgHeight = 2.5;
+                 const imgHeight = finalHeight * 0.3;
                  checkSpace(imgHeight + 0.4);
                  y += 0.2;
                  try {
@@ -207,7 +194,7 @@ export const downloadPdf = (book: Book) => {
                          doc.setFontSize(9);
                          const capLines = doc.splitTextToSize(vis.caption, contentWidth);
                          checkSpace(capLines.length * 0.15);
-                         doc.text(capLines, 3, y, { align: "center" });
+                         doc.text(capLines, margin, y, { align: "center", maxWidth: contentWidth });
                          y += (capLines.length * 0.15) + 0.2;
                      }
                  } catch(e) {
@@ -222,52 +209,29 @@ export const downloadPdf = (book: Book) => {
   if (book.backCover?.imageUrl) {
       doc.addPage();
       try {
-          doc.addImage(book.backCover.imageUrl, "PNG", 0, 0, pageWidth, pageHeight);
-          
-          // Back Cover Overlay Text (Blurb)
-          doc.setFillColor(0, 0, 0);
-          doc.rect(1, 2, 4, 3, "F"); // Dark box in middle
-          
-          doc.setFont("times", "normal");
-          doc.setFontSize(12);
-          doc.setTextColor(255, 255, 255);
-          
-          const blurbText = book.backCover.blurb || "Exposing the truth.";
-          const blurbLines = doc.splitTextToSize(blurbText, 3.5);
-          doc.text(blurbLines, 1.25, 2.5);
-
+          doc.addImage(book.backCover.imageUrl, "PNG", 0, 0, finalWidth, finalHeight);
       } catch (e) {
           console.warn("Back cover render error", e);
       }
   }
 
-  // --- Add Page Numbers ---
-  // Iterate through all pages to add footer numbers, skipping covers
-  
+  // --- Pagination ---
   const totalPages = doc.getNumberOfPages();
   let contentPageNum = 1;
-  const hasFrontCover = !!book.frontCover?.imageUrl;
 
   for (let i = 1; i <= totalPages; i++) {
-       // Logic: 
-       // If front cover exists, page 1 is cover (skip).
-       // Page 2 is TOC or internal title (skip).
-       // Start content num on Page 3 (or 2 if no cover).
-       
-       // Simplification: Do not number the first 2 pages or the last page (if back cover)
        const isLastPage = (i === totalPages && !!book.backCover?.imageUrl);
-       
+       // Skip covers and TOC in pagination
        if (i > 2 && !isLastPage) {
            doc.setPage(i);
            doc.setFont("times", "normal");
            doc.setFontSize(9);
-           doc.setTextColor(50); // Dark Gray
-           // Center page number at bottom
-           doc.text(`${contentPageNum}`, 3, 8.5, { align: "center" });
+           doc.setTextColor(50);
+           doc.text(`${contentPageNum}`, finalWidth / 2, finalHeight - 0.5, { align: "center" });
            contentPageNum++;
        }
   }
 
   const safeFilename = book.title.replace(/[^a-z0-9]/gi, '_').toLowerCase().substring(0, 50);
-  doc.save(`${safeFilename}_y-it_kdp_6x9.pdf`);
+  doc.save(`${safeFilename}_y-it_${settings.trimSize}.pdf`);
 };
