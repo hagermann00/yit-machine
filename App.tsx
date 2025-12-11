@@ -3,14 +3,15 @@ import InputSection from './components/InputSection';
 import ResearchDashboard from './components/ResearchDashboard';
 import BookReader from './components/BookReader';
 import AgentStatus from './components/AgentStatus';
-import { AppState, Book, Project, Branch, GenSettings, ExportSettings, TrimSize } from './types';
-import { BookOpen, PieChart, ArrowLeft, Download, ChevronDown, Plus, GitBranch, Settings, X, Loader2 } from 'lucide-react';
+import { ExportSettings, TrimSize } from './types';
+import { BookOpen, PieChart, ArrowLeft, Download, ChevronDown, GitBranch, Settings, X, Loader2, PenTool } from 'lucide-react';
 import { downloadPdf } from './utils/pdfExport';
 import { ProjectProvider, useProject } from './context/ProjectContext';
+import { ErrorBoundary } from './components/ErrorBoundary';
 
 // Main Content Wrapper to consume Context
 const AppContent: React.FC = () => {
-  const { state, startInvestigation, createBranch, resetProject, setActiveBranch } = useProject();
+  const { state, startInvestigation, createBranch, resetProject, setActiveBranch, updateBook } = useProject();
   const [activeTab, setActiveTab] = useState<'RESEARCH' | 'BOOK'>('RESEARCH');
   const [showBranchMenu, setShowBranchMenu] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
@@ -29,15 +30,6 @@ const AppContent: React.FC = () => {
         setShowExportModal(false);
         setShowExportMenu(false);
     }
-  };
-
-  const updateActiveBook = (updatedBook: Book) => {
-    // In a real app, we would dispatch an UPDATE_BOOK action to context
-    // For now, let's treat the book in context as immutable for this demo level
-    // or implement a simple local override if needed.
-    // Given the complexity of the refactor, we'll keep the read-only flow for this step
-    // or rely on the previous functionality if strictly required. 
-    console.warn("Book updates via Reader not yet fully wired to Reducer in this refactor step.");
   };
 
   if (state.status === 'INPUT' || state.status === 'ERROR') {
@@ -59,17 +51,37 @@ const AppContent: React.FC = () => {
     );
   }
 
-  if (state.status === 'RESEARCHING') {
+  // Combine Researching and Drafting into a Loading State View
+  if (state.status === 'RESEARCHING' || state.status === 'DRAFTING') {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-black text-white p-4">
         <div className="mb-8 relative">
            <div className="absolute inset-0 bg-yellow-500 blur-xl opacity-20 animate-pulse"></div>
            <Loader2 className="w-16 h-16 text-yellow-500 animate-spin relative z-10" />
         </div>
-        <h2 className="text-2xl font-bold font-mono tracking-widest text-center mb-8">
-          DEPLOYING AGENT SWARM
-        </h2>
-        <AgentStatus agents={state.agentStates} />
+
+        {state.status === 'RESEARCHING' ? (
+             <>
+                <h2 className="text-2xl font-bold font-mono tracking-widest text-center mb-8">
+                DEPLOYING AGENT SWARM
+                </h2>
+                <AgentStatus agents={state.agentStates} />
+             </>
+        ) : (
+            <div className="text-center animate-fadeIn">
+                <h2 className="text-2xl font-bold font-mono tracking-widest text-center mb-4">
+                    WRITING MANUSCRIPT
+                </h2>
+                <p className="text-gray-400 max-w-md mx-auto">
+                    The Author Agent is synthesizing the research into a structured narrative. This usually takes about 60 seconds...
+                </p>
+                <div className="mt-8 flex justify-center gap-2">
+                    <span className="w-2 h-2 bg-yellow-500 rounded-full animate-bounce" style={{animationDelay: '0s'}}></span>
+                    <span className="w-2 h-2 bg-yellow-500 rounded-full animate-bounce" style={{animationDelay: '0.2s'}}></span>
+                    <span className="w-2 h-2 bg-yellow-500 rounded-full animate-bounce" style={{animationDelay: '0.4s'}}></span>
+                </div>
+            </div>
+        )}
       </div>
     );
   }
@@ -155,7 +167,7 @@ const AppContent: React.FC = () => {
                                 book={activeBranch.book} 
                                 visualStyle={activeBranch.settings.visualStyle} 
                                 imageModelHierarchy={activeBranch.settings.imageModelHierarchy}
-                                onUpdateBook={updateActiveBook} 
+                                onUpdateBook={updateBook}
                             />
                         ) : (
                             <div className="text-center text-gray-500 py-20">No active branch selected.</div>
@@ -167,7 +179,7 @@ const AppContent: React.FC = () => {
                             </h3>
                             <InputSection 
                                 onGenerate={(topic, settings) => createBranch(settings)} 
-                                isLoading={state.status === 'RESEARCHING'} // Simplified loading state check
+                                isLoading={state.status === 'RESEARCHING' || state.status === 'DRAFTING'}
                                 existingResearchTopic={state.project.topic}
                                 defaultSettings={state.project.branches[0]?.settings}
                             />
@@ -233,9 +245,11 @@ const AppContent: React.FC = () => {
 
 const App: React.FC = () => {
   return (
-    <ProjectProvider>
-      <AppContent />
-    </ProjectProvider>
+    <ErrorBoundary>
+        <ProjectProvider>
+            <AppContent />
+        </ProjectProvider>
+    </ErrorBoundary>
   );
 };
 
