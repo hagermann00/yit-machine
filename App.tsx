@@ -52,6 +52,7 @@ const AppContent: React.FC = () => {
   }
 
   // Combine Researching and Drafting into a Loading State View
+  if ((state.status === 'RESEARCHING' || state.status === 'DRAFTING') as boolean) {
   if (state.status === 'RESEARCHING' || state.status === 'DRAFTING') {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-black text-white p-4">
