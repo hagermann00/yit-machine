@@ -1,14 +1,16 @@
+
 import React, { useEffect, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 
 const MESSAGES = [
-  "Scraping guru forums...",
-  "Analyzing failure rates...",
-  "Calculating hidden fees...",
-  "Uncovering pyramid structures...",
-  "Interviewing digital ghosts...",
-  "Generating PosiBot quotes...",
-  "Compiling the dossier...",
+  "DETECTIVE AGENT: Scouring Reddit for horror stories...",
+  "AUDITOR AGENT: Identifying hidden fees and software costs...",
+  "INSIDER AGENT: Investigating affiliate kickback structures...",
+  "STAT AGENT: Ignoring guru claims, finding real 2024 data...",
+  "Synthesizing Forensic Dossier from 4 sources...",
+  "Cross-referencing victim complaints...",
+  "Structuring data for Y-It Engine...",
+  "Calculating Ethical Risk Score...",
 ];
 
 const Loader: React.FC = () => {

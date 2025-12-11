@@ -4,163 +4,214 @@ import InputSection from './components/InputSection';
 import Loader from './components/Loader';
 import ResearchDashboard from './components/ResearchDashboard';
 import BookReader from './components/BookReader';
-import { generateBookContent } from './services/geminiService';
-import { GeneratedContent, AppState, Book } from './types';
-import { BookOpen, PieChart, FileText, ArrowLeft, Download, ChevronDown } from 'lucide-react';
+import { performResearch, generateDraft } from './services/geminiService';
+import { AppState, Book, Project, Branch, GenSettings } from './types';
+import { BookOpen, PieChart, ArrowLeft, Download, ChevronDown, Plus, GitBranch } from 'lucide-react';
 import { downloadPdf } from './utils/pdfExport';
 
 const App: React.FC = () => {
   const [state, setState] = useState<AppState>('INPUT');
-  const [data, setData] = useState<GeneratedContent | null>(null);
+  const [project, setProject] = useState<Project | null>(null);
+  const [activeBranchId, setActiveBranchId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'RESEARCH' | 'BOOK'>('RESEARCH');
   const [error, setError] = useState<string | null>(null);
   const [showExportMenu, setShowExportMenu] = useState(false);
+  const [showBranchMenu, setShowBranchMenu] = useState(false);
 
-  const handleGenerate = async (
-    topic: string, 
-    customSpec?: string, 
-    tone?: string, 
-    visualStyle?: string,
-    lengthLevel?: number,
-    imageDensity?: number,
-    techLevel?: number,
-    targetWordCount?: number,
-    caseStudyCount?: number,
-    frontCoverPrompt?: string,
-    backCoverPrompt?: string,
-    frontCoverImage?: string,
-    backCoverImage?: string
-  ) => {
-    setState('GENERATING');
+  // Phase 1: Initial Investigation (Research + First Branch)
+  const handleInitialGenerate = async (topic: string, settings: GenSettings) => {
+    setState('RESEARCHING');
     setError(null);
     try {
-      const result = await generateBookContent(
-          topic, 
-          customSpec, 
-          tone, 
-          visualStyle, 
-          lengthLevel, 
-          imageDensity, 
-          techLevel, 
-          targetWordCount, 
-          caseStudyCount,
-          frontCoverPrompt,
-          backCoverPrompt,
-          frontCoverImage,
-          backCoverImage
-      );
-      setData(result);
+      // Step 1: Research
+      const researchData = await performResearch(topic, settings.caseStudyCount);
+      
+      setState('DRAFTING');
+      // Step 2: Generate First Draft
+      const bookDraft = await generateDraft(topic, researchData, settings);
+
+      // Create Project Structure
+      const firstBranch: Branch = {
+          id: Date.now().toString(),
+          name: "Original Draft",
+          timestamp: Date.now(),
+          settings: settings,
+          book: bookDraft
+      };
+
+      setProject({
+          topic,
+          research: researchData,
+          branches: [firstBranch]
+      });
+      setActiveBranchId(firstBranch.id);
       setState('RESULT');
+      setActiveTab('RESEARCH'); // Start on Research for the big reveal
+
     } catch (err) {
       console.error(err);
-      setError("Failed to investigate topic. Please try again with a simpler topic or check your API limit.");
+      setError("Investigation failed. Please try again.");
       setState('INPUT');
+    }
+  };
+
+  // Phase 2: Adding a new Branch
+  const handleAddBranch = async (topic: string, settings: GenSettings) => {
+    if (!project) return;
+    setState('DRAFTING');
+    setError(null);
+    try {
+        const bookDraft = await generateDraft(project.topic, project.research, settings);
+        
+        const newBranch: Branch = {
+            id: Date.now().toString(),
+            name: `Draft ${project.branches.length + 1} (${settings.tone?.substring(0, 15) || 'Custom'}...)`,
+            timestamp: Date.now(),
+            settings: settings,
+            book: bookDraft
+        };
+
+        setProject(prev => prev ? {
+            ...prev,
+            branches: [...prev.branches, newBranch]
+        } : null);
+        
+        setActiveBranchId(newBranch.id);
+        setState('RESULT');
+        setActiveTab('BOOK'); // Auto switch to book to see new draft
+
+    } catch (err) {
+        console.error(err);
+        setError("Failed to generate new branch.");
+        setState('RESULT'); // Return to result view on failure
     }
   };
 
   const handleReset = () => {
     setState('INPUT');
-    setData(null);
+    setProject(null);
+    setActiveBranchId(null);
     setActiveTab('RESEARCH');
   };
 
-  const updateBook = (updatedBook: Book) => {
-    if (data) {
-        setData({ ...data, book: updatedBook });
+  const updateActiveBook = (updatedBook: Book) => {
+    if (project && activeBranchId) {
+        setProject({
+            ...project,
+            branches: project.branches.map(b => 
+                b.id === activeBranchId ? { ...b, book: updatedBook } : b
+            )
+        });
     }
   };
 
+  const activeBranch = project?.branches.find(b => b.id === activeBranchId);
+
   const handleExportPdf = () => {
-    if (data?.book) {
-        downloadPdf(data.book);
+    if (activeBranch) {
+        downloadPdf(activeBranch.book);
         setShowExportMenu(false);
     }
   };
 
   const handleExportJson = () => {
-    if (data) {
-        const jsonString = `data:text/json;chatset=utf-8,${encodeURIComponent(
-            JSON.stringify(data, null, 2)
-        )}`;
+    if (project) {
+        const jsonString = `data:text/json;chatset=utf-8,${encodeURIComponent(JSON.stringify(project, null, 2))}`;
         const link = document.createElement("a");
         link.href = jsonString;
-        link.download = "y-it-data.json";
+        link.download = `y-it-project-${project.topic}.json`;
         link.click();
         setShowExportMenu(false);
     }
   };
 
+  // --- Render States ---
+
   if (state === 'INPUT') {
     return (
       <>
-        {error && (
-            <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-red-600 text-white px-6 py-3 rounded-full shadow-xl z-50 flex items-center gap-2 animate-bounce">
-                <span>⚠️ {error}</span>
-            </div>
-        )}
-        <InputSection onGenerate={handleGenerate} isLoading={false} />
+        {error && <div className="fixed top-4 left-0 right-0 text-center pointer-events-none z-50"><span className="bg-red-600 text-white px-6 py-2 rounded-full shadow-xl inline-block animate-bounce">{error}</span></div>}
+        <InputSection onGenerate={handleInitialGenerate} isLoading={false} />
       </>
     );
   }
 
-  if (state === 'GENERATING') {
-    return <Loader />;
+  if (state === 'RESEARCHING' || state === 'DRAFTING') {
+    return (
+        <div className="min-h-screen flex flex-col items-center justify-center bg-black text-white p-4">
+             <Loader />
+             <div className="mt-8 text-yellow-500 font-mono text-sm uppercase tracking-widest animate-pulse">
+                {state === 'RESEARCHING' ? "Phase 1: Deep Web Forensic Scan" : "Phase 2: Constructing Narrative Branch"}
+             </div>
+        </div>
+    );
   }
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-gray-200 font-sans flex flex-col">
       {/* Header */}
-      <header className="h-16 border-b border-gray-800 bg-black/50 backdrop-blur-md sticky top-0 z-50 flex items-center justify-between px-6">
-        <div className="flex items-center gap-6">
-            <button 
-                onClick={handleReset}
-                className="text-gray-500 hover:text-white transition-colors flex items-center gap-2 text-sm"
-            >
-                <ArrowLeft size={16} /> New Investigation
+      <header className="h-16 border-b border-gray-800 bg-black/50 backdrop-blur-md sticky top-0 z-50 flex items-center justify-between px-4 lg:px-6">
+        <div className="flex items-center gap-4 lg:gap-6">
+            <button onClick={handleReset} className="text-gray-500 hover:text-white transition-colors flex items-center gap-2 text-sm">
+                <ArrowLeft size={16} /> <span className="hidden md:inline">New Topic</span>
             </button>
             <div className="h-6 w-px bg-gray-800"></div>
-            <h1 className="font-bold text-gray-100 hidden md:block truncate max-w-xs">{data?.book.title}</h1>
+            
+            {/* Branch Selector */}
+            <div className="relative">
+                <button 
+                    onClick={() => setShowBranchMenu(!showBranchMenu)}
+                    className="flex items-center gap-2 text-sm font-bold text-gray-200 hover:text-white transition-colors bg-gray-900 px-3 py-1.5 rounded-lg border border-gray-700"
+                >
+                    <GitBranch size={16} className="text-yellow-500"/>
+                    <span className="truncate max-w-[150px]">{activeBranch?.name || "Select Branch"}</span>
+                    <ChevronDown size={14} />
+                </button>
+
+                {showBranchMenu && (
+                    <div className="absolute top-full left-0 mt-2 w-64 bg-gray-900 border border-gray-700 rounded-lg shadow-2xl z-50 overflow-hidden">
+                        <div className="p-2 border-b border-gray-800 text-[10px] text-gray-500 uppercase font-bold tracking-widest">
+                            Available Drafts
+                        </div>
+                        {project?.branches.map(branch => (
+                            <button
+                                key={branch.id}
+                                onClick={() => { setActiveBranchId(branch.id); setShowBranchMenu(false); setActiveTab('BOOK'); }}
+                                className={`w-full text-left px-4 py-3 text-sm hover:bg-gray-800 border-l-2 transition-all ${activeBranchId === branch.id ? 'border-yellow-500 bg-gray-800/50 text-white' : 'border-transparent text-gray-400'}`}
+                            >
+                                <div className="font-bold">{branch.name}</div>
+                                <div className="text-[10px] text-gray-600">{new Date(branch.timestamp).toLocaleTimeString()}</div>
+                            </button>
+                        ))}
+                    </div>
+                )}
+            </div>
         </div>
         
+        {/* Tab Switcher */}
         <div className="flex bg-gray-900 rounded-lg p-1 border border-gray-800">
             <button 
                 onClick={() => setActiveTab('RESEARCH')}
-                className={`px-4 py-1.5 rounded-md text-sm font-medium flex items-center gap-2 transition-all ${activeTab === 'RESEARCH' ? 'bg-gray-700 text-white shadow-sm' : 'text-gray-500 hover:text-gray-300'}`}
+                className={`px-3 md:px-4 py-1.5 rounded-md text-sm font-medium flex items-center gap-2 transition-all ${activeTab === 'RESEARCH' ? 'bg-gray-700 text-white shadow-sm' : 'text-gray-500 hover:text-gray-300'}`}
             >
-                <PieChart size={14} /> Intel
+                <PieChart size={14} /> <span className="hidden md:inline">Intel</span>
             </button>
             <button 
                 onClick={() => setActiveTab('BOOK')}
-                className={`px-4 py-1.5 rounded-md text-sm font-medium flex items-center gap-2 transition-all ${activeTab === 'BOOK' ? 'bg-yellow-500 text-black shadow-sm' : 'text-gray-500 hover:text-gray-300'}`}
+                className={`px-3 md:px-4 py-1.5 rounded-md text-sm font-medium flex items-center gap-2 transition-all ${activeTab === 'BOOK' ? 'bg-yellow-500 text-black shadow-sm' : 'text-gray-500 hover:text-gray-300'}`}
             >
-                <BookOpen size={14} /> Book
+                <BookOpen size={14} /> <span className="hidden md:inline">Book</span>
             </button>
         </div>
 
         <div className="relative">
-            <button 
-                onClick={() => setShowExportMenu(!showExportMenu)}
-                className="text-gray-500 hover:text-white transition-colors flex items-center gap-1" 
-                title="Export"
-            >
-                <Download size={20} />
-                <ChevronDown size={14} />
+            <button onClick={() => setShowExportMenu(!showExportMenu)} className="text-gray-500 hover:text-white transition-colors flex items-center gap-1" title="Export">
+                <Download size={20} /> <ChevronDown size={14} />
             </button>
-            
             {showExportMenu && (
                 <div className="absolute right-0 top-full mt-2 w-48 bg-gray-900 border border-gray-800 rounded-lg shadow-xl py-1 z-50">
-                    <button 
-                        onClick={handleExportPdf}
-                        className="w-full text-left px-4 py-2 text-sm hover:bg-gray-800 text-gray-300 hover:text-white"
-                    >
-                        Download KDP PDF (6x9")
-                    </button>
-                    <button 
-                         onClick={handleExportJson}
-                        className="w-full text-left px-4 py-2 text-sm hover:bg-gray-800 text-gray-300 hover:text-white"
-                    >
-                        Export Raw JSON
-                    </button>
+                    <button onClick={handleExportPdf} className="w-full text-left px-4 py-2 text-sm hover:bg-gray-800 text-gray-300 hover:text-white">Download PDF (6x9)</button>
+                    <button onClick={handleExportJson} className="w-full text-left px-4 py-2 text-sm hover:bg-gray-800 text-gray-300 hover:text-white">Export Project JSON</button>
                 </div>
             )}
         </div>
@@ -168,16 +219,35 @@ const App: React.FC = () => {
 
       {/* Main View */}
       <main className="flex-1 p-6 md:p-8 max-w-7xl mx-auto w-full">
-        {data && (
+        {project && (
             <>
                 {activeTab === 'RESEARCH' ? (
-                    <ResearchDashboard data={data.research} />
+                    <ResearchDashboard data={project.research} />
                 ) : (
-                    <BookReader 
-                        book={data.book} 
-                        visualStyle={data.settings.visualStyle} 
-                        onUpdateBook={updateBook} 
-                    />
+                    <div className="flex flex-col gap-8">
+                        {activeBranch ? (
+                            <BookReader 
+                                book={activeBranch.book} 
+                                visualStyle={activeBranch.settings.visualStyle} 
+                                onUpdateBook={updateActiveBook} 
+                            />
+                        ) : (
+                            <div className="text-center text-gray-500 py-20">No active branch selected.</div>
+                        )}
+
+                        {/* Branch Creator Section */}
+                        <div className="border-t border-gray-800 pt-8 mt-8">
+                            <h3 className="text-xl font-bold text-gray-400 mb-6 flex items-center gap-2">
+                                <GitBranch size={20} /> Generate Alternative Draft
+                            </h3>
+                            <InputSection 
+                                onGenerate={handleAddBranch} 
+                                isLoading={state === 'DRAFTING'} 
+                                existingResearchTopic={project.topic}
+                                defaultSettings={project.branches[0]?.settings}
+                            />
+                        </div>
+                    </div>
                 )}
             </>
         )}

@@ -1,4 +1,3 @@
-
 export interface CaseStudy {
   name: string;
   type: 'WINNER' | 'LOSER';
@@ -23,13 +22,13 @@ export interface Stat {
 }
 
 export interface ResearchData {
-  marketStats: Stat[];
-  caseStudies: CaseStudy[];
-  affiliates: AffiliateOpp[];
-  hiddenCosts: Stat[];
+  summary: string;
   ethicalRating: number; // 1-10
   profitPotential: string;
-  summary: string;
+  marketStats: Stat[];
+  hiddenCosts: Stat[];
+  caseStudies: CaseStudy[];
+  affiliates: AffiliateOpp[];
 }
 
 export interface VisualElement {
@@ -66,6 +65,8 @@ export interface Book {
   chapters: Chapter[];
 }
 
+export type ImageModelID = 'gemini-3-pro-image-preview' | 'gemini-2.5-flash-image' | 'imagen-3.0-generate-001';
+
 export interface GenSettings {
   tone: string;
   visualStyle: string;
@@ -76,12 +77,38 @@ export interface GenSettings {
   caseStudyCount?: number;
   frontCoverPrompt?: string;
   backCoverPrompt?: string;
+  customSpec?: string;
+  imageModelHierarchy?: ImageModelID[];
 }
 
+export interface Branch {
+  id: string;
+  name: string;
+  timestamp: number;
+  settings: GenSettings;
+  book: Book;
+}
+
+export interface Project {
+  topic: string;
+  research: ResearchData;
+  branches: Branch[];
+}
+
+// For legacy/compatibility during migration if needed, though we primarily use Project now
 export interface GeneratedContent {
   book: Book;
   research: ResearchData;
   settings: GenSettings;
 }
 
-export type AppState = 'INPUT' | 'GENERATING' | 'RESULT';
+export type AppState = 'INPUT' | 'RESEARCHING' | 'DRAFTING' | 'RESULT';
+
+// Export Settings for PDF
+export type TrimSize = '5x8' | '6x9' | '7x10';
+
+export interface ExportSettings {
+    trimSize: TrimSize;
+    includeBleed: boolean;
+    imageQuality: 'standard' | 'high';
+}
